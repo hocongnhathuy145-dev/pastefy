@@ -1,0 +1,46 @@
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+
+-- Hàm dịch chuyển đến người chơi theo tên
+local function teleportToPlayer(targetName)
+    local targetPlayer = Players:FindFirstChild(targetName)
+    
+    -- Kiểm tra xem người chơi và nhân vật có tồn tại không
+    if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local targetCFrame = targetPlayer.Character.HumanoidRootPart.CFrame
+        
+        -- Dịch chuyển nhân vật của bạn đến vị trí đó
+        -- Thêm một khoảng cách nhỏ (ví dụ: + 3 studs lên trên) để tránh kẹt vào nhau
+        localPlayer.Character.HumanoidRootPart.CFrame = targetCFrame * CFrame.new(0, 3, 0)
+        print("Đã dịch chuyển đến: " .. targetName)
+    else
+        warn("Không tìm thấy người chơi hoặc nhân vật chưa load xong!")
+    end
+end
+
+-- Cách dùng: Thay "TenNguoiChoi" bằng tên chính xác của họ
+teleportToPlayer("TenNguoiChoi")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+
+local function fastTravel(targetName, speed)
+    local targetPlayer = Players:FindFirstChild(targetName)
+    
+    if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local rootPart = localPlayer.Character.HumanoidRootPart
+        local targetPos = targetPlayer.Character.HumanoidRootPart.Position
+        
+        -- Tính toán khoảng cách để giữ tốc độ ổn định
+        local distance = (rootPart.Position - targetPos).Magnitude
+        local duration = distance / speed -- speed càng cao di chuyển càng nhanh
+        
+        local info = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+        local tween = TweenService:Create(rootPart, info, {CFrame = targetPlayer.Character.HumanoidRootPart.CFrame})
+        
+        tween:Play()
+    end
+end
+
+-- Cách dùng: fastTravel("Tên", Tốc_độ) -> Tốc độ 100-300 là khá nhanh
+fastTravel("TenNguoiChoi", 200)
