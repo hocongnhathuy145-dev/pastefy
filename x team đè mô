@@ -1,0 +1,125 @@
+local TweenService = game:GetService("TweenService")
+local button = script.Parent
+local gradient = button:FindFirstChildOfClass("UIGradient")
+
+-- Cấu hình thời gian hiệu ứng chuyển động
+local TWEEN_TIME = 0.4 
+local tweenInfo = TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- Định nghĩa các trạng thái màu sắc "Long Hồn"
+-- Màu bình thường (Hơi tối, như rồng đang ngủ)
+local normalColor = ColorSequence.new{
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(150, 0, 0)),    -- Đỏ sẫm
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(180, 50, 0)), -- Cam tối
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 0, 0))     -- Đỏ sẫm
+}
+
+-- Màu rực sáng (Khi rê chuột vào - Rồng tỉnh giấc)
+local neonColor = ColorSequence.new{
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),     -- Đỏ tươi
+	ColorSequenceKeypoint.new(0.3, Color3.fromRGB(255, 100, 0)), -- Cam lửa
+	ColorSequenceKeypoint.new(0.7, Color3.fromRGB(255, 215, 0)), -- Vàng kim rực rỡ
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))      -- Đỏ tươi
+}
+
+-- Áp dụng màu mặc định ban đầu
+if gradient then
+	gradient.Color = normalColor
+end
+
+-- 1. HIỆU ỨNG RÊ CHUỘT VÀO (MouseEnter) - Sáng rực và phóng to nhẹ
+button.MouseEnter:Connect(function()
+	-- Phóng to nhẹ nút X tạo cảm giác quyền lực
+	TweenService:Create(button, tweenInfo, {Size = UDim2.new(0, 60, 0, 60)}):Play() -- Thay đổi kích cỡ gốc của bạn ở đây
+	
+	-- Khiến chữ X phát sáng (Nếu có UIStroke) hoặc tăng độ tương phản bằng cách xoay Gradient liên tục
+	if gradient then
+		gradient.Color = neonColor
+		-- Tạo hiệu ứng luồng sáng chạy qua chữ X
+		local rotationTween = TweenService:Create(gradient, TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, true), {Rotation = 360})
+		rotationTween:Play()
+		button.AttributeChanged:Connect(function() -- Lưu lại để xóa khi chuột rời đi
+			if button:GetAttribute("Hovering") == false then rotationTween:Cancel() end
+		end)
+		button:SetAttribute("Hovering", true)
+	end
+end)
+
+-- 2. HIỆU ỨNG RỜI CHUỘT (MouseLeave) - Tắt đèn, thu nhỏ lại
+button.MouseLeave:Connect(function()
+	button:SetAttribute("Hovering", false)
+	TweenService:Create(button, tweenInfo, {Size = UDim2.new(0, 50, 0, 50)}):Play() -- Trả về kích cỡ cũ
+	
+	if gradient then
+		gradient.Color = normalColor
+		gradient.Rotation = 0
+	end
+end)
+
+-- 3. HIỆU ỨNG CLICK CHUỘT (Đóng Menu)
+button.MouseButton1Click:Connect(function()
+	local menuFrame = button.Parent
+	
+	-- Hiệu ứng Menu thu nhỏ rồi biến mất biến mất mượt mà
+	local menuTween = TweenService:Create(menuFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+		Size = UDim2.new(0, 0, 0, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 0) -- Thu về tâm màn hình
+	})
+	
+	menuTween:Play()
+	menuTween.Completed:Connect(function()
+		menuFrame.Visible = false
+		-- Reset lại size gốc để lần sau mở lên không bị mất form
+		menuFrame.Size = UDim2.new(0, 400, 0, 300) 
+	end)
+end) 
+local Players = game:GetService("Players")
+local PathfindingService = game:GetService("PathfindingService")
+
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+mouse.Button1Down:Connect(function()
+	local character = player.Character
+	if not character then return end
+	
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	
+	if humanoid and rootPart and humanoid.Health > 0 then
+		local targetPosition = mouse.Hit.Position
+		
+		-- Tạo một đường đi mới
+		local path = PathfindingService:CreatePath({
+			AgentRadius = 2,
+			AgentHeight = 5,
+			AgentCanJump = true -- Cho phép nhân vật nhảy nếu gặp vật cản thấp
+		})
+		
+		-- Tính toán đường đi từ vị trí hiện tại đến điểm click
+		path:ComputeAsync(rootPart.Position, targetPosition)
+		
+		-- Nếu tìm thấy đường đi thành công
+		if path.Status == Enum.PathStatus.Success then
+			local waypoints = path:GetWaypoints()
+			
+			-- Đi qua từng điểm mốc (Waypoint) đã được tính toán
+			for _, waypoint in ipairs(waypoints) do
+				-- Nếu gặp điểm cần nhảy, nhân vật sẽ nhảy
+				if waypoint.Action == Enum.PathWaypointAction.Jump then
+					humanoid.Jump = true
+				end
+				
+				-- Di chuyển tới điểm mốc hiện tại
+				humanoid:MoveTo(waypoint.Position)
+				
+				-- Chờ cho đến khi nhân vật đến gần điểm mốc này mới đi tiếp điểm sau
+				humanoid.MoveToFinished:Wait()
+			end
+		else
+			-- Nếu không tìm được đường (bị kẹt hoàn toàn), đi thẳng tới đó như cách 1
+			humanoid:MoveTo(targetPosition)
+		end
+	end
+end)
+
