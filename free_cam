@@ -1,0 +1,285 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local localPlayer = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+-- --- CẤU HÌNH ---
+local MOVE_SPEED = 40    -- Tốc độ di chuyển camera
+local ROTATE_SPEED = 0.4  -- Tốc độ xoay camera
+local ZOOM_SPEED = 50     -- Tốc độ phóng to / thu nhỏ (FOV)
+local MIN_FOV = 15        -- Zoom gần tối đa (Góc nhìn hẹp)
+local MAX_FOV = 110       -- Zoom xa tối đa (Góc nhìn rộng)
+
+local isEnabled = false
+local cameraPos = Vector3.new(0, 15, 0)
+local cameraRot = Vector2.new(0, 0)
+local snapBackConfig = nil
+local moveVector = Vector3.new(0, 0, 0)
+
+-- --- TẠO GIAO DIỆN MOBILE (GUI) ---
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FreeCamMobileGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+-- Nút Bật/Tắt chính
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Size = UDim2.new(0, 120, 0, 45)
+ToggleButton.Position = UDim2.new(0.5, -60, 0, 20)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ToggleButton.Text = "Free Cam: OFF"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 60, 60)
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.TextSize = 16
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = ToggleButton
+
+-- Vùng cảm ứng Di Chuyển (Bên Trái)
+local MoveZone = Instance.new("Frame")
+MoveZone.Name = "MoveZone"
+MoveZone.Size = UDim2.new(0.4, 0, 0.7, 0)
+MoveZone.Position = UDim2.new(0, 0, 0.3, 0)
+MoveZone.BackgroundTransparency = 1
+MoveZone.Visible = false
+MoveZone.Parent = ScreenGui
+
+-- Vùng cảm ứng Xoay Camera (Bên Phải)
+local LookZone = Instance.new("Frame")
+LookZone.Name = "LookZone"
+LookZone.Size = UDim2.new(0.5, 0, 0.7, 0)
+LookZone.Position = UDim2.new(0.5, 0, 0.3, 0)
+LookZone.BackgroundTransparency = 1
+LookZone.Visible = false
+LookZone.Parent = ScreenGui
+
+-- Hàm hỗ trợ tạo nhanh các nút tròn điều khiển
+local function createRoundButton(name, text, xOffset, yOffset)
+	local button = Instance.new("TextButton")
+	button.Name = name
+	button.Size = UDim2.new(0, 55, 0, 55)
+	button.Position = UDim2.new(1, xOffset, 0.4, yOffset)
+	button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	button.Text = text
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.Font = Enum.Font.SourceSansBold
+	button.TextSize = 24
+	button.Visible = false
+	button.Parent = ScreenGui
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 28)
+	corner.Parent = button
+	
+	return button
+end
+
+-- Cột bên phải (Di chuyển lên/xuống)
+local UpButton = createRoundButton("UpButton", "▲", -70, 0)
+local DownButton = createRoundButton("DownButton", "▼", -70, 65)
+
+-- Cột bên cạnh (Phóng to / Thu nhỏ)
+local ZoomInButton = createRoundButton("ZoomInButton", "+", -135, 0)
+local ZoomOutButton = createRoundButton("ZoomOutButton", "-", -135, 65)
+
+
+-- --- LOGIC ĐÓNG BĂNG NHÂN VẬT ---
+local function setCharacterFrozen(frozen)
+	local character = localPlayer.Character
+	if character then
+		-- Khóa cứng HumanoidRootPart để nhân vật không thể di chuyển hay rơi tự do
+		local rootPart = character:FindFirstChild("HumanoidRootPart")
+		if rootPart then
+			rootPart.Anchored = frozen
+		end
+		
+		-- Làm mờ thanh di chuyển mặc định của Roblox bằng cách chỉnh tốc độ chạy về 0
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			if frozen then
+				humanoid.PlatformStand = true -- Tránh lỗi hoạt ảnh bị giật khi đứng im
+			else
+				humanoid.PlatformStand = false
+			end
+		end
+	end
+end
+
+
+-- --- LOGIC BẬT / TẮT FREE CAM ---
+local function toggleFreeCam()
+	isEnabled = not isEnabled
+	
+	MoveZone.Visible = isEnabled
+	LookZone.Visible = isEnabled
+	UpButton.Visible = isEnabled
+	DownButton.Visible = isEnabled
+	ZoomInButton.Visible = isEnabled
+	ZoomOutButton.Visible = isEnabled
+	
+	-- Đóng băng hoặc giải phóng nhân vật
+	setCharacterFrozen(isEnabled)
+	
+	if isEnabled then
+		ToggleButton.Text = "Free Cam: ON"
+		ToggleButton.TextColor3 = Color3.fromRGB(60, 255, 60)
+		
+		-- Lưu vị trí camera và FOV gốc của người chơi
+		snapBackConfig = {
+			CameraType = camera.CameraType,
+			CFrame = camera.CFrame,
+			FieldOfView = camera.FieldOfView
+		}
+		cameraPos = camera.CFrame.Position
+		camera.CameraType = Enum.CameraType.Scriptable
+	else
+		ToggleButton.Text = "Free Cam: OFF"
+		ToggleButton.TextColor3 = Color3.fromRGB(255, 60, 60)
+		
+		-- Khôi phục camera và FOV về mặc định
+		if snapBackConfig then
+			camera.CameraType = snapBackConfig.CameraType
+			camera.CFrame = snapBackConfig.CFrame
+			camera.FieldOfView = snapBackConfig.FieldOfView
+		end
+		moveVector = Vector3.new(0, 0, 0)
+	end
+end
+
+ToggleButton.MouseButton1Click:Connect(toggleFreeCam)
+
+-- Tự động tắt Free Cam nếu nhân vật bị reset/chết để tránh lỗi kẹt camera
+localPlayer.CharacterRemoving:Connect(function()
+	if isEnabled then
+		toggleFreeCam()
+	end
+end)
+
+
+-- --- XỬ LÝ CẢM ỨNG XOAY CAMERA ---
+local lookTouchInput = nil
+LookZone.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch and not lookTouchInput then
+		lookTouchInput = input
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if isEnabled and input == lookTouchInput then
+		local delta = input.Delta
+		cameraRot = cameraRot + Vector2.new(-delta.X * ROTATE_SPEED, -delta.Y * ROTATE_SPEED)
+		cameraRot = Vector2.new(cameraRot.X, math.clamp(cameraRot.Y, -85, 85))
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input == lookTouchInput then
+		lookTouchInput = nil
+	end
+end)
+
+
+-- --- XỬ LÝ CẢM ỨNG DI CHUYỂN ---
+local moveTouchInput = nil
+local touchStartPos = nil
+
+MoveZone.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch and not moveTouchInput then
+		moveTouchInput = input
+		touchStartPos = input.Position
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if isEnabled and input == moveTouchInput then
+		local curPos = input.Position
+		local diff = curPos - touchStartPos
+		
+		local forward = -diff.Y
+		local side = diff.X
+		
+		local length = math.sqrt(forward^2 + side^2)
+		if length > 10 then
+			moveVector = Vector3.new(side / length, 0, -forward / length)
+		else
+			moveVector = Vector3.new(0,0,0)
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input == moveTouchInput then
+		moveTouchInput = nil
+		moveVector = Vector3.new(0, 0, 0)
+	end
+end)
+
+
+-- --- HỆ THỐNG GIỮ ĐÈ NÚT (Lên, Xuống, Zoom +, Zoom -) ---
+local isUpPressed = false
+local isDownPressed = false
+local isZoomInPressed = false
+local isZoomOutPressed = false
+
+local function setupButtonHold(button, pressBoolSetter)
+	button.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			pressBoolSetter(true)
+		end
+	end)
+	button.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			pressBoolSetter(false)
+		end
+	end)
+end
+
+setupButtonHold(UpButton, function(val) isUpPressed = val end)
+setupButtonHold(DownButton, function(val) isDownPressed = val end)
+setupButtonHold(ZoomInButton, function(val) isZoomInPressed = val end)
+setupButtonHold(ZoomOutButton, function(val) isZoomOutPressed = val end)
+
+
+-- --- CẬP NHẬT RENDER KHUNG HÌNH (LOOP) ---
+RunService.RenderStepped:Connect(function(dt)
+	if not isEnabled then return end
+	
+	-- 1. Tính toán hướng quay của Camera
+	local camCFrame = CFrame.Angles(0, math.rad(cameraRot.X), 0) * CFrame.Angles(math.rad(cameraRot.Y), 0, 0)
+	local worldMove = Vector3.new(0, 0, 0)
+	
+	-- 2. Tính chuyển động di chuyển (Trái/Phải/Tiến/Lùi)
+	if moveVector.Magnitude > 0 then
+		worldMove = camCFrame:VectorToWorldSpace(moveVector)
+	end
+	
+	-- 3. Tính chuyển động di chuyển (Lên/Xuống)
+	if isUpPressed then
+		worldMove = worldMove + Vector3.new(0, 1, 0)
+	end
+	if isDownPressed then
+		worldMove = worldMove - Vector3.new(0, 1, 0)
+	end
+	
+	-- 4. Áp dụng di chuyển vào vị trí Camera
+	if worldMove.Magnitude > 0 then
+		cameraPos = cameraPos + worldMove.Unit * MOVE_SPEED * dt
+	end
+	
+	-- 5. Xử lý Zoom (Phóng to / Thu nhỏ FOV)
+	if isZoomInPressed then
+		camera.FieldOfView = math.clamp(camera.FieldOfView - (ZOOM_SPEED * dt), MIN_FOV, MAX_FOV)
+	elseif isZoomOutPressed then
+		camera.FieldOfView = math.clamp(camera.FieldOfView + (ZOOM_SPEED * dt), MIN_FOV, MAX_FOV)
+	end
+	
+	-- 6. Cập nhật CFrame cho Camera
+	camera.CFrame = CFrame.new(cameraPos) * camCFrame
+end)
